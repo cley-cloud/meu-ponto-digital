@@ -2,14 +2,26 @@ import streamlit as st
 import pandas as pd
 import re
 import io
-from datetime import datetime, timedelta
+from datetime import datetime
 
 st.set_page_config(page_title="Gestor de Ponto Inteligente", layout="wide")
 
 st.title("📊 Gestor de Ponto - WhatsApp")
-st.markdown("Sistema inteligente que aceita variações de escrita e erros de português.")
+st.markdown("Sistema personalizado para a equipe de técnicos.")
 
-LISTA_FUNCIONARIOS = ["Clayverton", "João Silva", "Maria Souza"]
+# --- LISTA DE TÉCNICOS CADASTRADOS ---
+LISTA_FUNCIONARIOS = [
+    "JOAO EUDES DE SOUSA",
+    "JOSE HELDER DA SILVA",
+    "JOSE ALVES BARBOSA JÚNIOR",
+    "RYAN",
+    "ROBERTO SÉRGIO DOS SANTOS",
+    "JOSEMBERG PAULO DA SILVA",
+    "LUIZ CARLOS SILVA DOS SANTOS",
+    "ANTÔNIO DAVID SERAFIM VIEIRA",
+    "EDIGLEYSTON",
+    "RAPHAEL"
+]
 
 def converter_para_hora(texto_hora):
     try:
@@ -23,7 +35,7 @@ def calcular_diferenca(hora_fim, hora_inicio):
     if hora_fim and hora_inicio:
         diff = hora_fim - hora_inicio
         total_segundos = int(diff.total_seconds())
-        if total_segundos < 0: return "--" # Evita erros de cálculo negativo
+        if total_segundos < 0: return "--"
         horas = total_segundos // 3600
         minutos = (total_segundos % 3600) // 60
         return f"{horas:02d}h {minutos:02d}m"
@@ -37,28 +49,12 @@ def formatar_hora_padrao(texto, hora_envio):
 
 def identificar_categoria(texto):
     msg = texto.lower().strip()
-    
-    # 1. INÍCIO (Pega: Inicio, Iniciei, Cheguei, Começando)
-    if any(p in msg for p in ["inic", "chegu", "comec", "inici"]):
-        return "inicio"
-    
-    # 2. ALMOÇO (Pega: Almoço, Almoco, Pausa, Comer)
-    # Bloqueia se tiver "volta" para não confundir com o retorno
+    if any(p in msg for p in ["inic", "chegu", "comec", "inici"]): return "inicio"
     if any(p in msg for p in ["almo", "pausa", "comer"]):
-        if "volt" not in msg:
-            return "almoco"
-    
-    # 3. VOLTA (Pega: Volta, Voltei, Retorn, Voltando)
-    # Aceita se tiver termos de retorno ou se a palavra "volta" for dita em mensagem curta (até 15 letras)
-    if any(p in msg for p in ["volta do", "retorn", "voltei", "voltand"]):
+        if "volt" not in msg: return "almoco"
+    if any(p in msg for p in ["volta do", "retorn", "voltei", "voltand"]) or ( "volta" in msg and len(msg) < 15):
         return "volta"
-    if "volta" in msg and len(msg) < 15: # Ex: "volta", "ja voltei", "volta almoço"
-        return "volta"
-    
-    # 4. FIM (Pega: Fim, Expediente, Espediente, Encerrado, Tchau, Finalizado)
-    if any(p in msg for p in ["fim", "espedi", "expedi", "encer", "tchau", "finali", "termin"]):
-        return "fim"
-        
+    if any(p in msg for p in ["fim", "espedi", "expedi", "encer", "tchau", "finali", "termin"]): return "fim"
     return None
 
 arquivo_upload = st.file_uploader("Escolha o arquivo conversa.txt", type="txt")
@@ -68,7 +64,6 @@ if arquivo_upload is not None:
     linhas = stringio.readlines()
 
     tabela_ponto = {}
-    # Padrão de mensagem: [Data Hora] - Nome: Mensagem
     padrao_msg = re.compile(r"(\d{2}/\d{2}/\d{4}) (\d{2}:\d{2}) - (.*?): (.*)")
     
     u_func, u_data, u_hora = None, None, None
@@ -86,11 +81,21 @@ if arquivo_upload is not None:
         cat = identificar_categoria(texto_analise)
         if cat and u_func:
             hora_f = formatar_hora_padrao(texto_analise, u_hora)
-            chave = (u_data, u_func)
-            if chave not in tabela_ponto:
-                tabela_ponto[chave] = {"Início": "--", "Almoço": "--", "Volta": "--", "Fim": "--"}
-            col_map = {"inicio": "Início", "almoco": "Almoço", "volta": "Volta", "fim": "Fim"}
-            tabela_ponto[chave][col_map[cat]] = hora_f
+            
+            # Identifica se a mensagem cita algum técnico da lista (equipe)
+            mencionados = [f for f in LISTA_FUNCIONARIOS if f.split()[0].lower() in texto_analise.lower()]
+            equipe = mencionados if mencionados else [u_func]
+            
+            for func_nome in equipe:
+                # Padroniza o nome para o formato oficial da lista se houver correspondência parcial
+                nome_oficial = next((f for f in LISTA_FUNCIONARIOS if f.lower() in func_nome.lower() or func_nome.lower() in f.lower()), func_nome)
+                
+                chave = (u_data, nome_oficial)
+                if chave not in tabela_ponto:
+                    tabela_ponto[chave] = {"Início": "--", "Almoço": "--", "Volta": "--", "Fim": "--"}
+                
+                col_map = {"inicio": "Início", "almoco": "Almoço", "volta": "Volta", "fim": "Fim"}
+                tabela_ponto[chave][col_map[cat]] = hora_f
 
     if tabela_ponto:
         dados_lista = []
@@ -100,37 +105,34 @@ if arquivo_upload is not None:
             h_vlt = converter_para_hora(pontos["Volta"])
             h_fim = converter_para_hora(pontos["Fim"])
 
-            duracao_almoco = calcular_diferenca(h_vlt, h_alm)
+            dur_alm = calcular_diferenca(h_vlt, h_alm)
             
             total_trabalhado = "--"
             if h_ini and h_fim:
-                total_dia_delta = h_fim - h_ini
+                total_delta = h_fim - h_ini
                 if h_vlt and h_alm:
-                    intervalo = h_vlt - h_alm
-                    total_dia_delta = total_dia_delta - intervalo
+                    total_delta -= (h_vlt - h_alm)
                 
-                segundos = int(total_dia_delta.total_seconds())
-                if segundos > 0:
-                    total_trabalhado = f"{segundos // 3600:02d}h {(segundos % 3600) // 60:02d}m"
+                seg = int(total_delta.total_seconds())
+                if seg > 0:
+                    total_trabalhado = f"{seg // 3600:02d}h {(seg % 3600) // 60:02d}m"
 
             data_obj = datetime.strptime(data, "%d/%m/%Y")
             dados_lista.append({
                 "Data_Obj": data_obj, "Data": data, "Funcionário": func,
-                "Início": pontos["Início"], "Almoço": pontos["Almoço"], 
-                "Volta": pontos["Volta"], "Fim": pontos["Fim"],
-                "Almoço(Tempo)": duracao_almoco, "Total Líquido": total_trabalhado
+                **pontos, "Almoço(Tempo)": dur_alm, "Total Líquido": total_trabalhado
             })
         
         df = pd.DataFrame(dados_lista).sort_values(by=["Data_Obj", "Funcionário"]).drop(columns=["Data_Obj"])
-        
-        st.subheader("📋 Relatório com Correção de Escrita")
+        st.subheader("📋 Relatório de Ponto - Equipe Técnica")
         st.dataframe(df, use_container_width=True)
 
-        st.subheader("✂️ Copiar para Sheets/Excel")
+        # Botão de Cópia
         buffer_copia = "Data\tFuncionario\tInicio\tAlmoco\tVolta\tFim\tIntervalo\tTotal\n"
         for _, row in df.iterrows():
             buffer_copia += f"{row['Data']}\t{row['Funcionário']}\t{row['Início']}\t{row['Almoço']}\t{row['Volta']}\t{row['Fim']}\t{row['Almoço(Tempo)']}\t{row['Total Líquido']}\n"
         
-        st.text_area("Selecione e copie (Ctrl+A, Ctrl+C):", buffer_copia, height=200)
+        st.text_area("Copie para o Sheets (Ctrl+A, Ctrl+C):", buffer_copia, height=200)
     else:
-        st.error("Nenhum dado reconhecido. Verifique se as palavras-chave foram usadas.")
+        st.info("Aguardando upload do arquivo para processar o ponto dos técnicos.")
+        
