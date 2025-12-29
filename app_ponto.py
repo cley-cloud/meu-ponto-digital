@@ -6,7 +6,7 @@ from datetime import datetime
 
 st.set_page_config(page_title="Gestor de Ponto Equipes v4", layout="wide")
 
-st.title("📊 Gestor de Ponto - Equipes Técnicas")
+st.title("📊Gestor de Ponto - VERSÃO ATUALIZADA")
 
 # --- LISTA FIXA DE TÉCNICOS ---
 LISTA_OFICIAL = [
@@ -170,3 +170,4 @@ if arquivo_upload is not None:
             buffer_copia += f"{row['Data']}\t{row['Funcionário']}\t{row['Início']}\t{row['Almoço']}\t{row['Volta']}\t{row['Fim']}\t{row['Intervalo']}\t{row['Total']}\n"
         
         st.text_area("Copiar para Google Sheets:", buffer_copia, height=200)
+
