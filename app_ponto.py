@@ -4,12 +4,25 @@ import re
 import io
 from datetime import datetime
 
-st.set_page_config(page_title="Gestor de Ponto por Equipes", layout="wide")
+st.set_page_config(page_title="Gestor de Ponto Equipes v4", layout="wide")
 
 st.title("📊 Gestor de Ponto - Equipes Técnicas")
-st.markdown("Filtre por data na barra lateral para visualizar e copiar dias específicos.")
 
-# --- MAPEAMENTO DE EQUIPES ---
+# --- LISTA FIXA DE TÉCNICOS ---
+LISTA_OFICIAL = [
+    "JOAO EUDES DE SOUSA",
+    "JOSE HELDER DA SILVA",
+    "JOSE ALVES BARBOSA JÚNIOR",
+    "RYAN GABRIEL SALES RICCIARDI",
+    "ROBERTO SÉRGIO DOS SANTOS",
+    "JOSEMBERG PAULO DA SILVA",
+    "LUIZ CARLOS SILVA DOS SANTOS",
+    "ANTÔNIO DAVID SERAFIM VIEIRA",
+    "EDIGLEYSTON",
+    "RAPHAEL"
+]
+
+# --- MAPEAMENTO DE EQUIPES (Para replicação) ---
 EQUIPES = {
     "Equipe 1": ["JOSE HELDER DA SILVA", "JOAO EUDES DE SOUSA"],
     "Equipe 2": ["JOSE ALVES BARBOSA JÚNIOR", "ANTÔNIO DAVID SERAFIM VIEIRA"],
@@ -20,7 +33,7 @@ EQUIPES = {
 
 def converter_para_hora(texto_hora):
     try:
-        if texto_hora and texto_hora != "--":
+        if texto_hora and texto_hora != "00:00:00":
             return datetime.strptime(texto_hora, "%H:%M:%S")
     except: return None
     return None
@@ -29,9 +42,9 @@ def calcular_diferenca(hora_fim, hora_inicio):
     if hora_fim and hora_inicio:
         diff = hora_fim - hora_inicio
         total_segundos = int(diff.total_seconds())
-        if total_segundos < 0: return "--"
+        if total_segundos < 0: return "00h 00m"
         return f"{total_segundos // 3600:02d}h {(total_segundos % 3600) // 60:02d}m"
-    return "--"
+    return "00h 00m"
 
 def formatar_hora_padrao(texto, hora_envio):
     match = re.search(r"(\d{1,2})[:hH](\d{2})", texto)
@@ -40,43 +53,59 @@ def formatar_hora_padrao(texto, hora_envio):
 
 def identificar_categoria(texto):
     msg = texto.lower().strip()
-    if any(p in msg for p in ["inic", "chegu", "comec", "inici"]): return "inicio"
-    if any(p in msg for p in ["almo", "pausa", "comer"]):
-        if "volt" not in msg: return "almoco"
-    if any(p in msg for p in ["volta do", "retorn", "voltei", "voltand"]) or ("volta" in msg and len(msg) < 15):
+    tamanho_curto = len(msg) < 25
+    if any(p in msg for p in ["inic", "chegu", "comec"]) and (tamanho_curto or "expediente" in msg):
+        return "inicio"
+    if any(p in msg for p in ["almo", "pausa", "comer"]) and "volt" not in msg and tamanho_curto:
+        return "almoco"
+    if any(p in msg for p in ["volta do", "retorn", "voltei", "voltand"]) or ("volta" in msg and tamanho_curto):
         return "volta"
-    if any(p in msg for p in ["fim", "espedi", "expedi", "encer", "tchau", "finali", "termin"]): return "fim"
+    if any(p in msg for p in ["fim", "espedi", "expedi", "encer", "tchau", "finali", "termin"]) and (tamanho_curto or "trabalho" in msg):
+        return "fim"
     return None
 
-def obter_parceiros(nome_remetente):
-    nome_remetente_upper = nome_remetente.upper()
-    for equipe, membros in EQUIPES.items():
-        if any(membro in nome_remetente_upper or nome_remetente_upper in membro for membro in membros):
+def obter_membros_equipe(nome_remetente):
+    nome_up = nome_remetente.upper()
+    for membros in EQUIPES.values():
+        if any(m in nome_up or nome_up in m for m in membros):
             return membros
-    return [nome_remetente]
+    # Se não estiver em equipe mas estiver na lista oficial
+    for funcionario in LISTA_OFICIAL:
+        if funcionario in nome_up or nome_up in funcionario:
+            return [funcionario]
+    return []
 
-# --- BARRA LATERAL (SIDEBAR) ---
-with st.sidebar:
-    st.header("⚙️ Filtros")
-    arquivo_upload = st.file_uploader("1. Carregue o arquivo conversa.txt", type="txt")
-    
-    # Filtro de Data
-    st.markdown("---")
-    st.subheader("2. Selecione o Dia")
-    filtro_data = st.date_input("Escolha uma data para filtrar", value=None)
-    if st.button("Limpar Filtro de Data"):
-        st.rerun()
+# --- INTERFACE ---
+arquivo_upload = st.file_uploader("1. Carregue o arquivo conversa.txt", type="txt")
 
-# --- PROCESSAMENTO ---
 if arquivo_upload is not None:
+    st.markdown("---")
+    col1, col2 = st.columns([1, 3])
+    with col1:
+        filtro_data = st.date_input("📅 Selecione o Dia", value=None)
+    with col2:
+        st.write("")
+        if st.button("Limpar Filtro / Ver Tudo"): st.rerun()
+
     stringio = io.StringIO(arquivo_upload.getvalue().decode("utf-8", errors="ignore"))
     linhas = stringio.readlines()
 
     tabela_ponto = {}
     padrao_msg = re.compile(r"(\d{2}/\d{2}/\d{4}) (\d{2}:\d{2}) - (.*?): (.*)")
     
-    u_func, u_data, u_hora = None, None, None
+    # Primeiro, identificar todas as datas presentes no arquivo
+    datas_no_arquivo = set()
+    for linha in linhas:
+        match = padrao_msg.search(linha)
+        if match: datas_no_arquivo.add(match.group(1))
 
+    # Inicializar a tabela para TODOS os funcionários em TODAS as datas encontradas
+    for data in datas_no_arquivo:
+        for funcionario in LISTA_OFICIAL:
+            tabela_ponto[(data, funcionario)] = {"Início": "00:00:00", "Almoço": "00:00:00", "Volta": "00:00:00", "Fim": "00:00:00"}
+
+    # Preencher com os dados reais do WhatsApp
+    u_func, u_data, u_hora = None, None, None
     for linha in linhas:
         linha = linha.replace("‎", "").strip()
         match = padrao_msg.search(linha)
@@ -90,59 +119,54 @@ if arquivo_upload is not None:
         cat = identificar_categoria(texto_analise)
         if cat and u_func:
             hora_f = formatar_hora_padrao(texto_analise, u_hora)
-            membros_equipe = obter_parceiros(u_func)
-            for funcionario in membros_equipe:
-                chave = (u_data, funcionario)
-                if chave not in tabela_ponto:
-                    tabela_ponto[chave] = {"Início": "--", "Almoço": "--", "Volta": "--", "Fim": "--"}
-                col_map = {"inicio": "Início", "almoco": "Almoço", "volta": "Volta", "fim": "Fim"}
-                tabela_ponto[chave][col_map[cat]] = hora_f
+            equipe = obter_membros_equipe(u_func)
+            for func_nome in equipe:
+                if (u_data, func_nome) in tabela_ponto:
+                    col_map = {"inicio": "Início", "almoco": "Almoço", "volta": "Volta", "fim": "Fim"}
+                    tabela_ponto[(u_data, func_nome)][col_map[cat]] = hora_f
 
     if tabela_ponto:
         dados_lista = []
         for (data, func), pontos in tabela_ponto.items():
+            data_obj = datetime.strptime(data, "%d/%m/%Y")
+            e_sabado = data_obj.weekday() == 5
+            
             h_ini = converter_para_hora(pontos["Início"])
             h_alm = converter_para_hora(pontos["Almoço"])
             h_vlt = converter_para_hora(pontos["Volta"])
             h_fim = converter_para_hora(pontos["Fim"])
-            dur_alm = calcular_diferenca(h_vlt, h_alm)
-            total_trabalhado = "--"
+            
+            dur_alm = "00h 00m" if e_sabado else calcular_diferenca(h_vlt, h_alm)
+            
+            total_trabalhado = "00h 00m"
             if h_ini and h_fim:
                 total_delta = h_fim - h_ini
-                if h_vlt and h_alm: total_delta -= (h_vlt - h_alm)
+                if not e_sabado and h_vlt and h_alm: total_delta -= (h_vlt - h_alm)
                 seg = int(total_delta.total_seconds())
                 if seg > 0: total_trabalhado = f"{seg // 3600:02d}h {(seg % 3600) // 60:02d}m"
 
-            data_obj = datetime.strptime(data, "%d/%m/%Y")
             dados_lista.append({
                 "Data_Obj": data_obj, "Data_Filtro": data_obj.date(), "Data": data, "Funcionário": func,
-                **pontos, "Intervalo": dur_alm, "Total Líquido": total_trabalhado
+                "Início": pontos["Início"], "Almoço": pontos["Almoço"], 
+                "Volta": pontos["Volta"], "Fim": pontos["Fim"],
+                "Intervalo": dur_alm, "Total": total_trabalhado
             })
         
         df_completo = pd.DataFrame(dados_lista).sort_values(by=["Data_Obj", "Funcionário"])
         
-        # APLICAÇÃO DO FILTRO DE DATA
         if filtro_data:
             df_final = df_completo[df_completo["Data_Filtro"] == filtro_data].copy()
-            st.success(f"Exibindo registros de: {filtro_data.strftime('%d/%m/%Y')}")
         else:
             df_final = df_completo.copy()
-            st.info("Exibindo todos os dias encontrados. Use o calendário na lateral para filtrar.")
 
         df_final = df_final.drop(columns=["Data_Obj", "Data_Filtro"])
 
-        # EXIBIÇÃO
-        st.subheader("📋 Tabela de Registros")
+        st.subheader(f"📋 Tabela de Ponto Oficial ({len(df_final)} registros)")
         st.dataframe(df_final, use_container_width=True)
 
-        st.subheader("✂️ Bloco de Cópia (Pronto para Sheets)")
+        st.subheader("✂️ Bloco de Cópia")
         buffer_copia = "Data\tFuncionario\tInicio\tAlmoco\tVolta\tFim\tIntervalo\tTotal\n"
         for _, row in df_final.iterrows():
-            buffer_copia += f"{row['Data']}\t{row['Funcionário']}\t{row['Início']}\t{row['Almoço']}\t{row['Volta']}\t{row['Fim']}\t{row['Intervalo']}\t{row['Total Líquido']}\n"
+            buffer_copia += f"{row['Data']}\t{row['Funcionário']}\t{row['Início']}\t{row['Almoço']}\t{row['Volta']}\t{row['Fim']}\t{row['Intervalo']}\t{row['Total']}\n"
         
-        st.text_area("Selecione tudo abaixo para copiar:", buffer_copia, height=200)
-    else:
-        st.warning("Nenhum dado de ponto reconhecido no arquivo.")
-else:
-    st.info("Por favor, faça o upload do arquivo conversa.txt na barra lateral.")
-                                                    
+        st.text_area("Copiar para Google Sheets:", buffer_copia, height=200)
